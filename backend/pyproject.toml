@@ -1,0 +1,15 @@
+[project]
+name = "autoresearch-pi-backend"
+version = "0.1.0"
+description = "Backend for AutoResearch-Pi"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.35.0",
+    "numpy>=2.0.0",
+    "scipy>=1.15.0",
+    "matplotlib>=3.10.0",
+]
+
+[tool.uv]
+dev-dependencies = []
