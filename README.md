@@ -56,6 +56,17 @@ The API will be available at `http://localhost:8000`
 ```bash
 cd frontend
 bun install
+```
+
+Configure the API URL (optional - defaults to http://localhost:8000):
+
+```bash
+echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local
+```
+
+Run the frontend:
+
+```bash
 bun run dev
 ```
 
