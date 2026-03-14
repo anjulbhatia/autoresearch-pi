@@ -20,14 +20,127 @@ import {
   AreaChart,
   Area,
 } from "recharts";
-import { api, Experiment } from "@/lib/api";
+import { api, Experiment, StreamUpdate, LeaderboardEntry } from "@/lib/api";
 
 const METHOD_COLORS: Record<string, string> = {
   polygon: "#f97316",
   monte_carlo: "#fb923c",
   leibniz: "#fdba74",
   nilakantha: "#fed7aa",
+  wallis: "#fef3c7",
+  madhava: "#fde68a",
+  brent_salamin: "#fcd34d",
+  ramanujan: "#fbbf24",
+  chudnovsky: "#f59e0b",
+  basel: "#d97706",
+  borwein: "#b45309",
+  spigot: "#92400e",
+  bbp: "#78350f",
 };
+
+function PolygonAnimation({ sides }: { sides: number }) {
+  const radius = 80;
+  const cx = 100;
+  const cy = 100;
+  
+  const points = Array.from({ length: sides }, (_, i) => {
+    const angle = (i * 2 * Math.PI / sides) - Math.PI / 2;
+    return {
+      x: cx + radius * Math.cos(angle),
+      y: cy + radius * Math.sin(angle),
+    };
+  });
+  
+  const pathD = points
+    .map((p, i) => `${i === 0 ? "M" : "L"}${p.x},${p.y}`)
+    .join(" ") + " Z";
+
+  return (
+    <svg width="200" height="200" viewBox="0 0 200 200">
+      <circle cx={cx} cy={cy} r={radius} fill="none" stroke="#27272a" strokeWidth="1" strokeDasharray="4 4" />
+      <motion.path
+        d={pathD}
+        fill="none"
+        stroke="#f97316"
+        strokeWidth="2"
+        initial={{ pathLength: 0 }}
+        animate={{ pathLength: 1 }}
+        transition={{ duration: 1 }}
+      />
+      {points.map((p, i) => (
+        <circle key={i} cx={p.x} cy={p.y} r="4" fill="#f97316" />
+      ))}
+      <text x={cx} y={cy + radius + 20} textAnchor="middle" fill="#71717a" fontSize="12">
+        n={sides}
+      </text>
+    </svg>
+  );
+}
+
+function MonteCarloAnimation({ samples, inside }: { samples: number; inside: number }) {
+  const displaySamples = Math.min(samples, 500);
+  
+  return (
+    <svg width="200" height="200" viewBox="0 0 200 200">
+      <rect x="20" y="20" width="160" height="160" fill="#09090b" stroke="#27272a" strokeWidth="1" />
+      <circle cx="100" cy="100" r="80" fill="none" stroke="#27272a" strokeWidth="1" strokeDasharray="4 4" />
+      {Array.from({ length: displaySamples }).map((_, i) => {
+        const x = 20 + (i % 25) * 6.4;
+        const y = 20 + Math.floor(i / 25) * 6.4;
+        const inCircle = (x - 100) ** 2 + (y - 100) ** 2 <= 80 ** 2;
+        return (
+          <circle
+            key={i}
+            cx={x}
+            cy={y}
+            r="1.5"
+            fill={inCircle ? "#f97316" : "#3f3f46"}
+          />
+        );
+      })}
+      <text x="100" y="190" textAnchor="middle" fill="#71717a" fontSize="10">
+        {inside}/{samples}
+      </text>
+    </svg>
+  );
+}
+
+function SeriesAnimation({ method, iterations }: { method: string; iterations: number }) {
+  const displayIter = Math.min(iterations, 30);
+  const terms = Array.from({ length: displayIter }, (_, i) => {
+    if (method === "leibniz") {
+      return 4 * ((-1) ** i) / (2 * i + 1);
+    } else if (method === "nilakantha") {
+      if (i === 0) return 3;
+      const n = Math.ceil(i / 2);
+      return 4 * ((-1) ** (n + 1)) / ((2 * n) * (2 * n + 1) * (2 * n + 2));
+    }
+    return 0;
+  });
+
+  return (
+    <div className="flex flex-col items-center justify-center h-full">
+      <div className="flex items-end justify-center h-[120px] gap-0.5">
+        {terms.map((term, i) => {
+          const cumulative = terms.slice(0, i + 1).reduce((a, b) => a + b, 0);
+          const height = Math.min(Math.abs(cumulative - Math.PI) * 80, 100);
+          const isPositive = term > 0;
+          return (
+            <motion.div
+              key={i}
+              className={`w-2 ${isPositive ? "bg-orange-500" : "bg-zinc-600"}`}
+              initial={{ height: 0 }}
+              animate={{ height: `${Math.max(height, 2)}px` }}
+              transition={{ duration: 0.2, delay: i * 0.02 }}
+            />
+          );
+        })}
+      </div>
+      <div className="mt-2 w-full h-0.5 bg-gradient-to-r from-orange-500 via-orange-400 to-orange-500" />
+      <p className="text-xs text-zinc-500 mt-2">{method} series</p>
+    </div>
+  );
+}
 
 export default function Home() {
   const [experiments, setExperiments] = useState<Experiment[]>([]);
@@ -35,6 +148,9 @@ export default function Home() {
   const [bestEstimate, setBestEstimate] = useState(0);
   const [bestMethod, setBestMethod] = useState("");
   const [bestError, setBestError] = useState(0);
+  const [currentMethod, setCurrentMethod] = useState("");
+  const [currentParameter, setCurrentParameter] = useState(0);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const eventSourceRef = useRef<EventSource | null>(null);
 
   const startResearch = () => {
@@ -44,13 +160,14 @@ export default function Home() {
 
     setIsRunning(true);
     setExperiments([]);
+    setLeaderboard([]);
 
-    const eventSource = api.streamResearch(30);
+    const eventSource = api.streamResearch(50);
     eventSourceRef.current = eventSource;
 
     eventSource.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-
+      const data: StreamUpdate = JSON.parse(event.data);
+      
       setExperiments((prev) => [
         ...prev,
         {
@@ -61,12 +178,14 @@ export default function Home() {
           timestamp: data.timestamp,
         },
       ]);
-
+      
       setBestEstimate(data.best_estimate);
       setBestMethod(data.best_method);
       setBestError(data.best_error);
+      setCurrentMethod(data.method);
+      setCurrentParameter(data.parameter);
 
-      if (data.total_experiments >= 30) {
+      if (data.total_iterations >= 50) {
         eventSource.close();
         setIsRunning(false);
       }
@@ -92,20 +211,6 @@ export default function Home() {
     estimate: exp.pi_estimate,
     method: exp.method,
   }));
-
-  const methodStats = experiments.reduce((acc, exp) => {
-    if (!acc[exp.method] || exp.error < acc[exp.method].error) {
-      acc[exp.method] = { method: exp.method, error: exp.error, parameter: exp.parameter };
-    }
-    return acc;
-  }, {} as Record<string, { method: string; error: number; parameter: number }>);
-
-  const methodData = Object.values(methodStats)
-    .sort((a, b) => a.error - b.error)
-    .map((m, i) => ({
-      ...m,
-      rank: i + 1,
-    }));
 
   return (
     <div className="min-h-screen bg-black text-zinc-100 font-sans">
@@ -171,68 +276,68 @@ export default function Home() {
             <Card className="bg-zinc-950 border-zinc-800">
               <CardHeader className="pb-3">
                 <CardTitle className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
-                  Best Method
+                  Visualization
                 </CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  <div
-                    className="px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800"
-                  >
-                    <span className="text-lg font-medium capitalize text-orange-400">
-                      {bestMethod.replace('_', ' ') || '—'}
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="bg-zinc-900 rounded px-2 py-1.5">
-                      <span className="text-zinc-500">Experiments</span>
-                      <p className="font-mono text-zinc-300">{experiments.length}</p>
+              <CardContent className="flex items-center justify-center">
+                <AnimatePresence mode="wait">
+                  {currentMethod === "polygon" && (
+                    <motion.div
+                      key="polygon"
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0 }}
+                    >
+                      <PolygonAnimation sides={Math.min(currentParameter, 12)} />
+                    </motion.div>
+                  )}
+                  {currentMethod === "monte_carlo" && (
+                    <motion.div
+                      key="monte"
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0 }}
+                    >
+                      <MonteCarloAnimation 
+                        samples={Math.min(currentParameter, 500)} 
+                        inside={Math.floor(currentParameter * 0.785)} 
+                      />
+                    </motion.div>
+                  )}
+                  {(currentMethod === "leibniz" || currentMethod === "nilakantha") && (
+                    <motion.div
+                      key="series"
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="w-full h-[180px]"
+                    >
+                      <SeriesAnimation method={currentMethod} iterations={currentParameter} />
+                    </motion.div>
+                  )}
+                  {!currentMethod && (
+                    <div className="text-xs text-zinc-600 text-center py-8">
+                      Run research to see visualizations
                     </div>
-                    <div className="bg-zinc-900 rounded px-2 py-1.5">
-                      <span className="text-zinc-500">Target</span>
-                      <p className="font-mono text-zinc-300">30</p>
-                    </div>
-                  </div>
-                </div>
+                  )}
+                </AnimatePresence>
               </CardContent>
             </Card>
 
             <Card className="bg-zinc-950 border-zinc-800">
               <CardHeader className="pb-3">
                 <CardTitle className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
-                  Leaderboard
+                  Method Distribution
                 </CardTitle>
               </CardHeader>
-              <CardContent className="max-h-[280px] overflow-y-auto">
-                <div className="space-y-2">
-                  {methodData.length === 0 ? (
-                    <p className="text-xs text-zinc-600 text-center py-4">
-                      Run experiments to see rankings
-                    </p>
-                  ) : (
-                    methodData.map((m, i) => (
-                      <motion.div
-                        key={m.method}
-                        initial={{ opacity: 0, x: -10 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: i * 0.05 }}
-                        className="flex items-center gap-3 p-2 rounded bg-zinc-900/50"
-                      >
-                        <span className="text-xs font-mono text-zinc-600 w-4">
-                          #{m.rank}
-                        </span>
-                        <span
-                          className="flex-1 text-sm capitalize"
-                          style={{ color: METHOD_COLORS[m.method] }}
-                        >
-                          {m.method.replace('_', ' ')}
-                        </span>
-                        <span className="text-xs font-mono text-zinc-500">
-                          {m.error.toExponential(2)}
-                        </span>
-                      </motion.div>
-                    ))
-                  )}
+              <CardContent className="max-h-[200px] overflow-y-auto">
+                <div className="space-y-1">
+                  {Object.entries(METHOD_COLORS).slice(0, 8).map(([method, color]) => (
+                    <div key={method} className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
+                      <span className="text-xs capitalize text-zinc-400">{method.replace('_', ' ')}</span>
+                    </div>
+                  ))}
                 </div>
               </CardContent>
             </Card>
@@ -245,12 +350,9 @@ export default function Home() {
                   <CardTitle className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
                     Convergence
                   </CardTitle>
-                  <div className="flex items-center gap-4 text-xs">
-                    <span className="flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-orange-500" />
-                      Error
-                    </span>
-                  </div>
+                  <span className="text-xs text-zinc-500">
+                    {experiments.length}/50
+                  </span>
                 </div>
               </CardHeader>
               <CardContent className="h-[280px]">
@@ -273,7 +375,7 @@ export default function Home() {
                       stroke="#52525b"
                       tick={{ fill: '#71717a', fontSize: 10 }}
                       tickLine={{ stroke: '#3f3f46' }}
-                      tickFormatter={(v) => v < 0.01 ? v.toFixed(3) : v < 1 ? v.toFixed(2) : v.toFixed(0)}
+                      tickFormatter={(v) => Number(v) < 0.01 ? Number(v).toFixed(3) : Number(v) < 1 ? Number(v).toFixed(2) : Number(v).toFixed(0)}
                     />
                     <Tooltip
                       contentStyle={{
@@ -282,7 +384,6 @@ export default function Home() {
                         borderRadius: '6px',
                         fontSize: '11px',
                       }}
-                      labelStyle={{ color: '#a1a1aa' }}
                       formatter={(value) => [Number(value).toExponential(4), 'Error']}
                     />
                     <Area
@@ -344,36 +445,29 @@ export default function Home() {
             <Card className="bg-zinc-950 border-zinc-800">
               <CardHeader className="pb-3">
                 <CardTitle className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
-                  Method Distribution
+                  Best Method
                 </CardTitle>
               </CardHeader>
-              <CardContent className="h-[200px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={methodData} layout="vertical">
-                    <XAxis type="number" hide />
-                    <YAxis
-                      type="category"
-                      dataKey="method"
-                      tick={{ fill: '#a1a1aa', fontSize: 10 }}
-                      width={80}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: '#09090b',
-                        border: '1px solid #27272a',
-                        borderRadius: '6px',
-                        fontSize: '11px',
-                      }}
-                      formatter={(value) => [Number(value).toExponential(4), 'Best Error']}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="error"
-                      fill="#f97316"
-                      stroke="#fb923c"
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
+              <CardContent>
+                <div className="space-y-3">
+                  <div
+                    className="px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800"
+                  >
+                    <span className="text-lg font-medium capitalize text-orange-400">
+                      {bestMethod.replace('_', ' ') || '—'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="bg-zinc-900 rounded px-2 py-1.5">
+                      <span className="text-zinc-500">Experiments</span>
+                      <p className="font-mono text-zinc-300">{experiments.length}</p>
+                    </div>
+                    <div className="bg-zinc-900 rounded px-2 py-1.5">
+                      <span className="text-zinc-500">Target</span>
+                      <p className="font-mono text-zinc-300">50</p>
+                    </div>
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
@@ -396,7 +490,7 @@ export default function Home() {
                         <div className="flex items-center justify-between">
                           <span
                             className="text-xs font-medium capitalize"
-                            style={{ color: METHOD_COLORS[exp.method] }}
+                            style={{ color: METHOD_COLORS[exp.method] || '#71717a' }}
                           >
                             {exp.method.replace('_', ' ')}
                           </span>
@@ -457,7 +551,7 @@ export default function Home() {
                   <div className="bg-zinc-900 rounded p-2">
                     <p className="text-[10px] text-zinc-500">Progress</p>
                     <p className="text-sm font-mono text-orange-400">
-                      {Math.round((experiments.length / 30) * 100)}%
+                      {Math.round((experiments.length / 50) * 100)}%
                     </p>
                   </div>
                 </div>

@@ -1,3 +1,3 @@
-from .research_runner import ResearchRunner, run_research, stream_research
+from .research_runner import ResearchAgent, run_research, stream_research
 
-__all__ = ["ResearchRunner", "run_research", "stream_research"]
+__all__ = ["ResearchAgent", "run_research", "stream_research"]
